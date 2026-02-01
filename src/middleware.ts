@@ -1,30 +1,46 @@
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { jwtVerify } from 'jose';
 
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'dev-secret-key-change-me');
 
-export function middleware(request: NextRequest) {
-    const token = request.cookies.get('auth_token')
-    const { pathname } = request.nextUrl
+export async function middleware(request: NextRequest) {
+    const token = request.cookies.get('token')?.value;
+    const { pathname } = request.nextUrl;
 
-    // If user is on login page and has token, redirect to today
-    if (pathname === '/login' && token?.value === 'valid_session') {
-        return NextResponse.redirect(new URL('/today', request.url))
+    // Paths that require auth
+    const protectedPaths = ['/today', '/history'];
+    const isProtected = protectedPaths.some(p => pathname.startsWith(p)) || pathname === '/';
+
+    // Public paths (login/signup) - redirect to dashboard if logged in
+    const isPublicAuth = ['/login', '/signup'].some(p => pathname.startsWith(p));
+
+    if (isProtected) {
+        if (!token) {
+            return NextResponse.redirect(new URL('/login', request.url));
+        }
+        try {
+            await jwtVerify(token, JWT_SECRET);
+            return NextResponse.next();
+        } catch (e) {
+            // Invalid token
+            return NextResponse.redirect(new URL('/login', request.url));
+        }
     }
 
-    // If user is on protected pages and has no token, redirect to login
-    // Also protect root / to redirect to login
-    if ((pathname.startsWith('/today') || pathname.startsWith('/history') || pathname === '/') && token?.value !== 'valid_session') {
-        return NextResponse.redirect(new URL('/login', request.url))
+    if (isPublicAuth && token) {
+        try {
+            await jwtVerify(token, JWT_SECRET);
+            return NextResponse.redirect(new URL('/today', request.url));
+        } catch (e) {
+            // Token invalid, allow access to login
+            return NextResponse.next();
+        }
     }
 
-    // Default root redirect
-    if (pathname === '/' && token?.value === 'valid_session') {
-        return NextResponse.redirect(new URL('/today', request.url))
-    }
-
-    return NextResponse.next()
+    return NextResponse.next();
 }
 
 export const config = {
-    matcher: ['/', '/login', '/today/:path*', '/history/:path*'],
-}
+    matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+};

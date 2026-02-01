@@ -1,6 +1,28 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
+export async function GET() {
+    try {
+        const db = await getDb();
+
+        // Ensure default categories exist
+        const DEFAULTS = ['Revolt', 'TLE', 'Personal', 'Misc'];
+        const existingRes = await db.execute('SELECT title FROM sections');
+        const existingTitles = new Set(existingRes.rows.map((r: any) => r.title));
+
+        for (const def of DEFAULTS) {
+            if (!existingTitles.has(def)) {
+                await db.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: [def] });
+            }
+        }
+
+        const res = await db.execute('SELECT * FROM sections');
+        return NextResponse.json(res.rows);
+    } catch (e) {
+        return NextResponse.json({ error: 'Failed to fetch sections' }, { status: 500 });
+    }
+}
+
 export async function POST(request: Request) {
     try {
         const { title } = await request.json();

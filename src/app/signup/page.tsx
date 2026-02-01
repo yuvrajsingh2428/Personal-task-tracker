@@ -8,9 +8,10 @@ import Link from 'next/link';
 
 const outfit = Outfit({ subsets: ['latin'] });
 
-export default function LoginPage() {
+export default function SignupPage() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
 
@@ -18,15 +19,15 @@ export default function LoginPage() {
         e.preventDefault();
         setLoading(true);
         try {
-            const res = await fetch('/api/auth/login', {
+            const res = await fetch('/api/auth/signup', {
                 method: 'POST',
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify({ name, email, password }),
             });
             const data = await res.json();
 
-            if (!res.ok) throw new Error(data.error || 'Login failed');
+            if (!res.ok) throw new Error(data.error || 'Signup failed');
 
-            toast.success('Welcome back');
+            toast.success('Account created!');
             router.push('/today');
         } catch (e: any) {
             toast.error(e.message);
@@ -44,10 +45,22 @@ export default function LoginPage() {
                 </div>
 
                 <div className="relative z-10">
-                    <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tight">Login</h1>
-                    <p className="text-gray-400 font-bold text-sm uppercase tracking-widest mb-8">Access your tracker</p>
+                    <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tight">Join</h1>
+                    <p className="text-gray-400 font-bold text-sm uppercase tracking-widest mb-8">Start your execution</p>
 
                     <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Name</label>
+                            <input
+                                type="text"
+                                required
+                                value={name}
+                                onChange={e => setName(e.target.value)}
+                                className="w-full p-4 rounded-xl bg-gray-50 text-base font-bold text-gray-900 outline-none focus:ring-2 focus:ring-black/5 border border-gray-100 transition-all"
+                                placeholder="John Doe"
+                            />
+                        </div>
+
                         <div>
                             <label className="block text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Email</label>
                             <input
@@ -68,7 +81,7 @@ export default function LoginPage() {
                                 value={password}
                                 onChange={e => setPassword(e.target.value)}
                                 className="w-full p-4 rounded-xl bg-gray-50 text-base font-bold text-gray-900 outline-none focus:ring-2 focus:ring-black/5 border border-gray-100 transition-all"
-                                placeholder="••••••••"
+                                placeholder="Create a password"
                             />
                         </div>
 
@@ -77,15 +90,15 @@ export default function LoginPage() {
                             disabled={loading}
                             className="w-full bg-black text-white font-bold py-4 rounded-xl text-lg hover:shadow-lg hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4"
                         >
-                            {loading ? 'Authenticating...' : 'Sign In'}
+                            {loading ? 'Creating Account...' : 'Sign Up'}
                         </button>
                     </form>
 
                     <div className="mt-8 text-center">
                         <p className="text-gray-400 text-sm font-medium">
-                            Don't have an account?{' '}
-                            <Link href="/signup" className="text-black font-bold hover:underline">
-                                Sign Up
+                            Already have an account?{' '}
+                            <Link href="/login" className="text-black font-bold hover:underline">
+                                Log In
                             </Link>
                         </p>
                     </div>

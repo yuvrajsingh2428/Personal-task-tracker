@@ -2,7 +2,7 @@
 import { createClient } from '@libsql/client';
 import path from 'path';
 
-const url = process.env.TURSO_DATABASE_URL || `file:${path.join(process.cwd(), 'tracker.db')}`;
+const url = process.env.TURSO_DATABASE_URL || `file:${path.join(process.cwd(), 'tracker_v2.db')}`;
 const authToken = process.env.TURSO_AUTH_TOKEN;
 
 console.log(`Initializing DB with URL: ${url}`);
@@ -12,41 +12,75 @@ const client = createClient({
   authToken,
 });
 
-let initialized = false;
+let initPromise: Promise<void> | null = null;
 
-export async function getDb() {
-  if (!initialized) {
-    try {
-      // 1. Create Tables
-      // Use execute sequence instead of batch for consistent behavior across drivers if mixed
-      await client.execute(`CREATE TABLE IF NOT EXISTS sections (
+async function initDb() {
+  try {
+    // 1. Create Tables
+    await client.execute(`CREATE TABLE IF NOT EXISTS sections (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`);
 
-      await client.execute(`CREATE TABLE IF NOT EXISTS memory_rules (
+    await client.execute(`CREATE TABLE IF NOT EXISTS memory_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     content TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`);
 
-      await client.execute(`CREATE TABLE IF NOT EXISTS daily_logs (
+    await client.execute(`CREATE TABLE IF NOT EXISTS habits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    subtitle TEXT,
+                    icon TEXT,
+                    color TEXT DEFAULT 'purple',
+                    streak INTEGER DEFAULT 0,
+                    track_streak INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )`);
+
+    await client.execute(`CREATE TABLE IF NOT EXISTS habit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    habit_id INTEGER,
+                    date TEXT,
+                    completed INTEGER DEFAULT 0,
+                    time_spent INTEGER DEFAULT 0,
+                    note TEXT,
+                    FOREIGN KEY(habit_id) REFERENCES habits(id)
+                )`);
+
+    // Migration: Ensure habits table has new columns (Remote DB Fix)
+    try { await client.execute('ALTER TABLE habits ADD COLUMN subtitle TEXT'); } catch (e) { /* ignore */ }
+    try { await client.execute('ALTER TABLE habits ADD COLUMN icon TEXT'); } catch (e) { /* ignore */ }
+    try { await client.execute('ALTER TABLE habits ADD COLUMN color TEXT DEFAULT "purple"'); } catch (e) { /* ignore */ }
+    try { await client.execute('ALTER TABLE habits ADD COLUMN streak INTEGER DEFAULT 0'); } catch (e) { /* ignore */ }
+    try { await client.execute('ALTER TABLE habits ADD COLUMN track_streak INTEGER DEFAULT 0'); } catch (e) { /* ignore */ }
+
+    const habitsCount = await client.execute('SELECT COUNT(*) as count FROM habits');
+    if (habitsCount.rows[0].count === 0) {
+      await client.execute(`INSERT INTO habits (title, subtitle, icon, color) VALUES
+              ('DSA', 'Solve 1 Problem', '🧩', 'purple'),
+              ('Learning', 'Dev / Playwright', '💻', 'amber'),
+              ('Gym', 'Health & Fitness', '💪', 'red')`);
+    }
+
+    await client.execute(`CREATE TABLE IF NOT EXISTS daily_logs (
                     date TEXT PRIMARY KEY,
                     tle_minutes INTEGER DEFAULT 0,
                     note TEXT,
                     tomorrow_intent TEXT
                 )`);
 
-      await client.execute(`CREATE TABLE IF NOT EXISTS habits (
+    await client.execute(`CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    priority INTEGER DEFAULT 1,
-                    is_archived INTEGER DEFAULT 0,
+                    email TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    name TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`);
 
-      await client.execute(`CREATE TABLE IF NOT EXISTS tasks (
+    await client.execute(`CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,
                     title TEXT NOT NULL,
@@ -55,54 +89,150 @@ export async function getDb() {
                     note TEXT,
                     habit_id INTEGER,
                     section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+                    estimated_time INTEGER, -- minutes
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`);
 
-      // 2. Migrations
-      // Try/Catch blocks for safe migrations
+    // 2. Migrations
+    try {
+      await client.execute(`ALTER TABLE tasks ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL`);
+    } catch (e) { /* ignore */ }
+
+    try {
+      await client.execute(`ALTER TABLE tasks ADD COLUMN estimated_time INTEGER`);
+    } catch (e) { /* ignore */ }
+
+    try {
+      await client.execute(`ALTER TABLE tasks ADD COLUMN note TEXT`);
+    } catch (e) { /* ignore */ }
+
+    try {
+      await client.execute(`ALTER TABLE daily_logs ADD COLUMN tomorrow_intent TEXT`);
+    } catch (e) { /* ignore */ }
+
+    // Daily System Migrations
+    const systemCols = [
+      'dsa_done INTEGER DEFAULT 0',
+      'dev_done INTEGER DEFAULT 0',
+      'gym_done INTEGER DEFAULT 0',
+      'work_done INTEGER DEFAULT 0',
+      'secondary_work_mins INTEGER DEFAULT 0',
+      'focus_done INTEGER DEFAULT 0'
+    ];
+
+    for (const col of systemCols) {
       try {
-        await client.execute(`ALTER TABLE tasks ADD COLUMN section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL`);
+        await client.execute(`ALTER TABLE daily_logs ADD COLUMN ${col}`);
       } catch (e) { /* ignore */ }
+    }
 
+    // 3. Seed Defaults
+    const secCount = await client.execute('SELECT count(*) as c FROM sections');
+    const countVal = secCount.rows[0];
+
+    if (Number(countVal?.c || 0) === 0 && Number(countVal?.[0] || 0) === 0) {
+      const rs = await client.execute('SELECT * FROM sections LIMIT 1');
+      if (rs.rows.length === 0) {
+        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Work'] });
+        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Personal'] });
+        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Revolt'] });
+        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['TLE'] });
+      }
+    }
+
+    const memInfo = await client.execute('SELECT * FROM memory_rules LIMIT 1');
+    if (memInfo.rows.length === 0) {
+      await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['DSA: Minimum 1 problem daily'] });
+      await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['Health is non-negotiable'] });
+      await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['Consistency > Intensity'] });
+    }
+
+    // Workout Schedule Table
+    await client.execute(`CREATE TABLE IF NOT EXISTS workout_schedule (
+                    day_index INTEGER PRIMARY KEY, -- 0=Sun, 1=Mon...
+                    day_name TEXT NOT NULL,
+                    focus_area TEXT NOT NULL,
+                    exercises TEXT
+                )`);
+
+    // Migrations for Extended Daily Logs
+    const detailedCols = [
+      'dsa_time INTEGER DEFAULT 0', 'dsa_note TEXT',
+      'dev_time INTEGER DEFAULT 0', 'dev_note TEXT',
+      'gym_time INTEGER DEFAULT 0', 'gym_note TEXT'
+    ];
+
+    for (const col of detailedCols) {
       try {
-        await client.execute(`ALTER TABLE daily_logs ADD COLUMN tomorrow_intent TEXT`);
+        await client.execute(`ALTER TABLE daily_logs ADD COLUMN ${col}`);
       } catch (e) { /* ignore */ }
+    }
 
+    // Buying List Table
+    await client.execute(`CREATE TABLE IF NOT EXISTS buying_list (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item TEXT NOT NULL,
+                    category TEXT, -- e.g. 'Household', 'Bike', 'Coco'
+                    completed INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )`);
 
-      // 3. Seed Defaults
-      const secCount = await client.execute('SELECT count(*) as c FROM sections');
-      // libSQL rows are objects or arrays depending on config, but standard client returns rows as objects usually if not specified
-      // actually standard client returns { columns, rows, types }. rows are array of array (if int mode) or objects? 
-      // Default is objects { c: 2 } or array values [2].
-      // To be safe, we check what it returns or just use a count check. 
-      // Let's assume standard object access row['c'] or row.c if mapped. 
-      // Better to use safe access.
-      const countVal = secCount.rows[0];
-      // @libsql/client returns rows as Objects { c: 0 } by default? 
-      // Actually it returns 'Result' object. rows is Row[].
+    // Buying Categories (Added for Dynamic Categories)
+    await client.execute(`CREATE TABLE IF NOT EXISTS buying_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )`);
 
-      if (Number(countVal?.c || 0) === 0 && Number(countVal?.[0] || 0) === 0) {
-        // Check if it's 0 (handling both array/object response potential)
-        // actually simpler:
-        const rs = await client.execute('SELECT * FROM sections LIMIT 1');
-        if (rs.rows.length === 0) {
-          await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Work'] });
-          await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Personal'] });
+    // Seed Categories
+    const catCount = await client.execute('SELECT COUNT(*) as c FROM buying_categories');
+    if (Number(catCount.rows[0].c) === 0) {
+      const defaults = ['General', 'Coco 🐶', 'Bike 🏍️', 'Household 🏠', 'Health ❤️'];
+      for (const d of defaults) {
+        await client.execute({ sql: 'INSERT OR IGNORE INTO buying_categories (name) VALUES (?)', args: [d] });
+      }
+    }
+
+    // Seed Workout Schedule if empty
+    const wsCount = await client.execute('SELECT count(*) as c FROM workout_schedule');
+    if (Number(wsCount.rows[0]?.c || wsCount.rows[0]?.[0] || 0) === 0) {
+      const wsRes = await client.execute('SELECT * FROM workout_schedule LIMIT 1');
+      if (wsRes.rows.length === 0) {
+        const manualSplit = [
+          { i: 0, n: 'Sunday', f: 'Rest / Active Recovery', e: 'Light stretching, Walk' },
+          { i: 1, n: 'Monday', f: 'Chest Day', e: 'Bench Press, Flies, Push ups' },
+          { i: 2, n: 'Tuesday', f: 'Triceps', e: 'Pushdowns, Extensions, Dips' },
+          { i: 3, n: 'Wednesday', f: 'Back', e: 'Pullups, Rows, Lat Pulldowns' },
+          { i: 4, n: 'Thursday', f: 'Biceps', e: 'Curls, Hammer Curls' },
+          { i: 5, n: 'Friday', f: 'Shoulders', e: 'Overhead Press, Lateral Raises' },
+          { i: 6, n: 'Saturday', f: 'Leg Day', e: 'Squats, Lunges, Calf Raises' }
+        ];
+        for (const d of manualSplit) {
+          await client.execute({
+            sql: 'INSERT INTO workout_schedule (day_index, day_name, focus_area, exercises) VALUES (?, ?, ?, ?)',
+            args: [d.i, d.n, d.f, d.e]
+          });
         }
       }
-
-      const memInfo = await client.execute('SELECT * FROM memory_rules LIMIT 1');
-      if (memInfo.rows.length === 0) {
-        await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['DSA: Minimum 1 problem daily'] });
-        await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['Health is non-negotiable'] });
-        await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['Consistency > Intensity'] });
-      }
-
-      initialized = true;
-    } catch (err) {
-      console.error("Failed to initialize database:", err);
-      throw err;
     }
+
+  } catch (err) {
+    console.error("Failed to initialize database:", err);
+    // Reset promise to null so next call can try again? 
+    // Or keep it rejected. Keeping it rejected is safer to avoid infinite loop of tries if persistent error.
+    throw err;
+  }
+}
+
+export async function getDb() {
+  if (!initPromise) {
+    initPromise = initDb();
+  }
+  try {
+    await initPromise;
+  } catch (e) {
+    initPromise = null; // Retry next time? Or maybe fatal.
+    throw e;
   }
   return client;
 }
