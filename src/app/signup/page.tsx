@@ -18,6 +18,11 @@ export default function SignupPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        if (password.length < 8) {
+            toast.error('Password must be at least 8 characters long');
+            setLoading(false);
+            return;
+        }
         try {
             const res = await fetch('/api/auth/signup', {
                 method: 'POST',
@@ -81,7 +86,8 @@ export default function SignupPage() {
                                 value={password}
                                 onChange={e => setPassword(e.target.value)}
                                 className="w-full p-4 rounded-xl bg-gray-50 text-base font-bold text-gray-900 outline-none focus:ring-2 focus:ring-black/5 border border-gray-100 transition-all"
-                                placeholder="Create a password"
+                                placeholder="Min. 8 characters"
+                                minLength={8}
                             />
                         </div>
 

@@ -29,7 +29,7 @@ export async function PATCH(request: Request) {
 
     try {
         const body = await request.json();
-        const { id, completed, title, priority, note, estimated_time } = body;
+        const { id, completed, title, priority, note, estimated_time, date } = body;
 
         if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
@@ -49,6 +49,9 @@ export async function PATCH(request: Request) {
         }
         if (estimated_time !== undefined) {
             await db.execute({ sql: 'UPDATE tasks SET estimated_time = ? WHERE id = ? AND user_id = ?', args: [estimated_time, id, userId] });
+        }
+        if (date !== undefined) {
+            await db.execute({ sql: 'UPDATE tasks SET date = ? WHERE id = ? AND user_id = ?', args: [date, id, userId] });
         }
 
         return NextResponse.json({ success: true });

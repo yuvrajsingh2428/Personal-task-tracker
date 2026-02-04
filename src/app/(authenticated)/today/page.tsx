@@ -531,7 +531,7 @@ export default function TodayPage() {
                                     <div className="space-y-2">
                                         {catTasks.length === 0 && <div className="text-xs text-gray-300 font-medium py-2">No tasks</div>}
                                         {catTasks.map((t: any) => (
-                                            <TaskCard key={t.id} task={t} onToggle={(id: any, c: any) => handleTaskAction('PATCH', { id, completed: c })} onClick={() => setActiveTaskDetails(t)} />
+                                            <TaskCard key={t.id} task={t} onToggle={(id: any, c: any) => handleTaskAction('PATCH', { id, completed: c, date: date })} onClick={() => setActiveTaskDetails(t)} />
                                         ))}
                                     </div>
                                 </div>
@@ -554,7 +554,7 @@ export default function TodayPage() {
                                         <div className="space-y-2">
                                             {catDoneTasks.map((t: any) => (
                                                 <div key={t.id} className="opacity-60 hover:opacity-100 transition-opacity">
-                                                    <TaskCard task={t} onToggle={(id: any, c: any) => handleTaskAction('PATCH', { id, completed: c })} compact onClick={() => setActiveTaskDetails(t)} />
+                                                    <TaskCard task={t} onToggle={(id: any, c: any) => handleTaskAction('PATCH', { id, completed: c, date: date })} compact onClick={() => setActiveTaskDetails(t)} />
                                                 </div>
                                             ))}
                                         </div>
