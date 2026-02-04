@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const outfit = Outfit({ subsets: ['latin'] });
 const PRIORITY_LABELS = { 0: 'LOW', 1: 'MED', 2: 'HIGH' };
-const CATEGORIES = ['Revolt', 'TLE', 'Personal', 'Misc'];
+// Removed hardcoded CATEGORIES in favor of dynamic sections from DB
 const EMOJIS = ['🚀', '⭐', '🔥', '💡', '🎯', '🎨', '🏆', '⚡', '🦁', '🌊', '🏔️', '💎', '🧬', '🔮'];
 
 const COLOR_MAP: Record<string, any> = {
@@ -40,15 +40,36 @@ export default function TodayPage() {
     // UI States
     const [saving, setSaving] = useState(false);
     const [activeNote, setActiveNote] = useState<string | null>(null); // For habit card notes
-    const [addingType, setAddingType] = useState<null | 'task' | 'gym_info' | 'profile' | 'habit'>(null);
+    const [addingType, setAddingType] = useState<null | 'task' | 'gym_info' | 'profile' | 'habit' | 'edit_buy' | 'buy_category' | 'task_category'>(null);
     const [buyingList, setBuyingList] = useState<any[]>([]);
     const [newBuyItem, setNewBuyItem] = useState('');
     const [newBuyCategory, setNewBuyCategory] = useState('General');
+    const [newBuyNote, setNewBuyNote] = useState('');
     const [buyCategories, setBuyCategories] = useState<any[]>([]);
+    const [newCategoryName, setNewCategoryName] = useState('');
+    const [newTaskCategoryTitle, setNewTaskCategoryTitle] = useState('');
+    const [confirmConfig, setConfirmConfig] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        isAlert?: boolean;
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+        isAlert: false
+    });
+
+    const openConfirm = (title: string, message: string, onConfirm: () => void, isAlert = false) => {
+        setConfirmConfig({ isOpen: true, title, message, onConfirm, isAlert });
+    };
 
     // Modals Data
     const [activeTaskDetails, setActiveTaskDetails] = useState<any>(null);
     const [editingHabit, setEditingHabit] = useState<any>(null);
+    const [editingBuyItem, setEditingBuyItem] = useState<any>(null);
 
     // New Item Inputs (Task)
     const [newItemTitle, setNewItemTitle] = useState('');
@@ -220,18 +241,23 @@ export default function TodayPage() {
         }
     };
 
-    const handleDeleteHabit = async (id: number) => {
-        if (!confirm('Are you sure you want to delete this card?')) return;
-        try {
-            await fetch('/api/habits', {
-                method: 'DELETE',
-                body: JSON.stringify({ id })
-            });
-            toast.success('Card deleted');
-            fetchData();
-        } catch (e) {
-            toast.error('Failed to delete');
-        }
+    const handleDeleteHabit = (id: number) => {
+        openConfirm(
+            'Delete Card',
+            'Are you sure you want to delete this card? This action cannot be undone.',
+            async () => {
+                try {
+                    await fetch('/api/habits', {
+                        method: 'DELETE',
+                        body: JSON.stringify({ id })
+                    });
+                    toast.success('Card deleted');
+                    fetchData();
+                } catch (e) {
+                    toast.error('Failed to delete');
+                }
+            }
+        );
     };
 
 
@@ -322,17 +348,22 @@ export default function TodayPage() {
         }
     };
 
-    const handleDeleteTask = async (id: number) => {
-        if (!confirm('Delete task?')) return;
-        try {
-            await fetch('/api/tasks', { method: 'DELETE', body: JSON.stringify({ id }) });
-            // Refresh
-            const r = await fetch(`/api/daily?date=${date}`);
-            setData(await r.json());
-            toast.success('Task Deleted');
-        } catch (e) {
-            toast.error('Failed');
-        }
+    const handleDeleteTask = (id: number) => {
+        openConfirm(
+            'Delete Task',
+            'Are you sure you want to delete this task?',
+            async () => {
+                try {
+                    await fetch('/api/tasks', { method: 'DELETE', body: JSON.stringify({ id }) });
+                    // Refresh
+                    const r = await fetch(`/api/daily?date=${date}`);
+                    setData(await r.json());
+                    toast.success('Task Deleted');
+                } catch (e) {
+                    toast.error('Failed');
+                }
+            }
+        );
     };
 
     const handleTaskAction = async (method: string, body: any) => {
@@ -363,12 +394,12 @@ export default function TodayPage() {
     }, [habits]);
 
     const processedCategories = useMemo(() => {
-        if (sections.length > 0) {
-            const titles = sections.map((s: any) => s.title);
-            // Ensure Misc is always available
-            return titles.includes('Misc') ? titles : [...titles, 'Misc'];
-        }
-        return CATEGORIES;
+        const titles = sections.map((s: any) => s.title);
+        // Default categories if none exist (though signup seeds them now)
+        if (titles.length === 0) return ['Work', 'Personal', 'Misc'];
+
+        // Ensure 'Misc' is always there even if not in DB
+        return titles.includes('Misc') ? titles : [...titles, 'Misc'];
     }, [sections]);
 
     const mainHabits = sortedHabits.slice(0, 3);
@@ -466,8 +497,37 @@ export default function TodayPage() {
                         {processedCategories.map((cat: string) => {
                             const catTasks = pendingTasks.filter((t: any) => (t.section_title || 'Misc') === cat || (cat === 'Misc' && !t.section_title));
                             return (
-                                <div key={cat} className="bg-gray-50 dark:bg-gray-900 rounded-2xl p-4 border border-gray-100 dark:border-gray-800">
-                                    <h3 className="text-sm font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-3">{cat}</h3>
+                                <div key={cat} className="bg-gray-50 dark:bg-gray-900 rounded-2xl p-4 border border-gray-100 dark:border-gray-800 relative group/section">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <h3 className="text-sm font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest">{cat}</h3>
+                                        {cat !== 'Misc' && (
+                                            <button
+                                                onClick={async () => {
+                                                    if (catTasks.length > 0) {
+                                                        openConfirm('Action Required', 'Move or delete items in this section first before deleting it.', () => { }, true);
+                                                        return;
+                                                    }
+                                                    openConfirm(
+                                                        'Delete Section',
+                                                        `Are you sure you want to delete the section "${cat}"?`,
+                                                        async () => {
+                                                            const section = sections.find(s => s.title === cat);
+                                                            if (section) {
+                                                                await fetch('/api/sections', { method: 'DELETE', body: JSON.stringify({ id: section.id }) });
+                                                                const r = await fetch(`/api/dashboard?date=${date}`);
+                                                                const res = await r.json();
+                                                                setSections(res.sections);
+                                                                toast.success('Section deleted');
+                                                            }
+                                                        }
+                                                    );
+                                                }}
+                                                className="opacity-0 group-hover/section:opacity-100 transition-opacity text-red-500 text-xs px-2"
+                                            >
+                                                ✕
+                                            </button>
+                                        )}
+                                    </div>
                                     <div className="space-y-2">
                                         {catTasks.length === 0 && <div className="text-xs text-gray-300 font-medium py-2">No tasks</div>}
                                         {catTasks.map((t: any) => (
@@ -514,8 +574,8 @@ export default function TodayPage() {
                     Shopping List
                 </h2>
 
-                <div className="grid md:grid-cols-2 gap-12">
-                    <div className="space-y-6">
+                <div className="flex flex-col lg:grid lg:grid-cols-2 gap-8 lg:gap-12">
+                    <div className="space-y-8">
                         <div className="flex flex-col gap-2">
                             <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar-x items-center">
                                 {buyCategories.map(cat => (
@@ -537,14 +597,18 @@ export default function TodayPage() {
                                                     e.stopPropagation();
                                                     const hasActiveItems = buyingList.some(item => !item.completed && item.category === cat.name);
                                                     if (hasActiveItems) {
-                                                        alert(`Cannot remove "${cat.name}" while it has items in the "To Buy" section.`);
+                                                        openConfirm('Action Required', `Cannot remove "${cat.name}" while it has items in the "To Buy" section.`, () => { }, true);
                                                         return;
                                                     }
-                                                    if (confirm(`Remove category "${cat.name}"? (History will be preserved)`)) {
-                                                        await fetch('/api/buying/categories', { method: 'DELETE', body: JSON.stringify({ id: cat.id }) });
-                                                        fetchBuyCategories();
-                                                        if (newBuyCategory === cat.name) setNewBuyCategory('General');
-                                                    }
+                                                    openConfirm(
+                                                        'Remove Category',
+                                                        `Remove category "${cat.name}"? (History will be preserved)`,
+                                                        async () => {
+                                                            await fetch('/api/buying/categories', { method: 'DELETE', body: JSON.stringify({ id: cat.id }) });
+                                                            fetchBuyCategories();
+                                                            if (newBuyCategory === cat.name) setNewBuyCategory('General');
+                                                        }
+                                                    );
                                                 }}
                                                 className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-[8px] opacity-0 group-hover/cat:opacity-100 transition-opacity"
                                             >
@@ -553,42 +617,48 @@ export default function TodayPage() {
                                         )}
                                     </div>
                                 ))}
-                                <button onClick={async () => {
-                                    const name = prompt('New Category Name (e.g. Work 💼):');
-                                    if (name) {
-                                        await fetch('/api/buying/categories', { method: 'POST', body: JSON.stringify({ name }) });
-                                        fetchBuyCategories();
-                                        setNewBuyCategory(name);
-                                    }
+                                <button onClick={() => {
+                                    setNewCategoryName('');
+                                    setAddingType('buy_category');
                                 }} className="px-3 py-1 rounded-full border border-dashed border-gray-300 dark:border-gray-600 text-gray-400 text-[10px] font-bold hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors whitespace-nowrap">+ New Category</button>
                             </div>
-                            <div className="flex gap-2">
-                                <input
-                                    value={newBuyItem}
-                                    onChange={e => setNewBuyItem(e.target.value)}
-                                    onKeyDown={async e => {
-                                        if (e.key === 'Enter' && newBuyItem.trim()) {
-                                            const r = await fetch('/api/buying', { method: 'POST', body: JSON.stringify({ item: newBuyItem, category: newBuyCategory }) });
-                                            if (r.ok) {
-                                                setNewBuyItem('');
-                                                fetchBuyingList();
-                                                toast.success('Added to list');
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <div className="flex-1 flex flex-col sm:flex-row gap-2">
+                                    <input
+                                        value={newBuyItem}
+                                        onChange={e => setNewBuyItem(e.target.value)}
+                                        onKeyDown={async e => {
+                                            if (e.key === 'Enter' && newBuyItem.trim()) {
+                                                const r = await fetch('/api/buying', { method: 'POST', body: JSON.stringify({ item: newBuyItem, category: newBuyCategory, note: newBuyNote }) });
+                                                if (r.ok) {
+                                                    setNewBuyItem('');
+                                                    setNewBuyNote('');
+                                                    fetchBuyingList();
+                                                    toast.success('Added to list');
+                                                }
                                             }
-                                        }
-                                    }}
-                                    className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 font-bold text-gray-900 dark:text-white outline-none focus:ring-2 ring-black/5 dark:ring-white/10"
-                                    placeholder={`Buy for ${newBuyCategory}...`}
-                                />
+                                        }}
+                                        className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 font-bold text-gray-900 dark:text-white outline-none focus:ring-2 ring-black/5 dark:ring-white/10"
+                                        placeholder={`Buy for ${newBuyCategory}...`}
+                                    />
+                                    <input
+                                        value={newBuyNote}
+                                        onChange={e => setNewBuyNote(e.target.value)}
+                                        className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 text-xs font-medium text-gray-600 dark:text-gray-400 outline-none focus:ring-2 ring-black/5 dark:ring-white/10"
+                                        placeholder="Add a note... (optional)"
+                                    />
+                                </div>
                                 <button onClick={async () => {
                                     if (newBuyItem.trim()) {
-                                        const r = await fetch('/api/buying', { method: 'POST', body: JSON.stringify({ item: newBuyItem, category: newBuyCategory }) });
+                                        const r = await fetch('/api/buying', { method: 'POST', body: JSON.stringify({ item: newBuyItem, category: newBuyCategory, note: newBuyNote }) });
                                         if (r.ok) {
                                             setNewBuyItem('');
+                                            setNewBuyNote('');
                                             fetchBuyingList();
                                             toast.success('Added');
                                         }
                                     }
-                                }} className="bg-black dark:bg-white text-white dark:text-black font-bold px-6 rounded-xl hover:opacity-80 transition-opacity">
+                                }} className="bg-black dark:bg-white text-white dark:text-black font-bold px-6 py-4 sm:py-0 rounded-xl hover:opacity-80 transition-opacity">
                                     Add
                                 </button>
                             </div>
@@ -610,10 +680,17 @@ export default function TodayPage() {
                                             {items.map((item: any) => (
                                                 <div key={item.id} className="flex items-center gap-3 group bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm relative">
                                                     <button onClick={() => toggleBuyItem(item)} className="w-5 h-5 rounded-md border-2 border-gray-300 hover:border-green-500 hover:text-green-500 transition-colors flex items-center justify-center text-transparent hover:text-current">✓</button>
-                                                    <span className="font-bold text-gray-700 dark:text-gray-200 text-sm flex-1">{item.item}</span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="font-bold text-gray-700 dark:text-gray-200 text-sm">{item.item}</p>
+                                                        {item.note && <p className="text-[10px] text-gray-400 dark:text-gray-500 italic mt-0.5">{item.note}</p>}
+                                                    </div>
                                                     <button onClick={() => {
-                                                        if (confirm('Delete?')) deleteBuyItem(item.id);
-                                                    }} className="ml-auto text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑️</button>
+                                                        setEditingBuyItem(item);
+                                                        setAddingType('edit_buy');
+                                                    }} className="ml-auto text-gray-300 hover:text-black dark:hover:text-white p-1 opacity-0 group-hover:opacity-100 transition-opacity">✎</button>
+                                                    <button onClick={() => {
+                                                        openConfirm('Delete Item', 'Are you sure?', () => deleteBuyItem(item.id));
+                                                    }} className="text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity">🗑️</button>
                                                 </div>
                                             ))}
                                         </div>
@@ -624,27 +701,31 @@ export default function TodayPage() {
                         </div>
                     </div>
 
-                    <div className="bg-green-50 dark:bg-green-900/10 rounded-2xl p-6 border border-green-100 dark:border-green-900/20">
+                    <div className="bg-green-50 dark:bg-green-900/10 rounded-2xl p-6 border border-green-100 dark:border-green-900/20 h-fit">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-xs font-bold text-green-600 dark:text-green-400 uppercase tracking-widest">Purchased History</h3>
                             {buyingList.some(i => i.completed) && (
                                 <button
                                     onClick={async () => {
-                                        if (confirm('Clear all purchase history?')) {
-                                            const completedItems = buyingList.filter(i => i.completed);
-                                            // Optimistic
-                                            setBuyingList(prev => prev.filter(i => !i.completed));
+                                        openConfirm(
+                                            'Clear History',
+                                            'Are you sure you want to clear all purchase history? This cannot be undone.',
+                                            async () => {
+                                                const completedItems = buyingList.filter(i => i.completed);
+                                                // Optimistic
+                                                setBuyingList(prev => prev.filter(i => !i.completed));
 
-                                            try {
-                                                for (const item of completedItems) {
-                                                    await fetch('/api/buying', { method: 'DELETE', body: JSON.stringify({ id: item.id }) });
+                                                try {
+                                                    for (const item of completedItems) {
+                                                        await fetch('/api/buying', { method: 'DELETE', body: JSON.stringify({ id: item.id }) });
+                                                    }
+                                                    toast.success('History cleared');
+                                                } catch (err) {
+                                                    fetchBuyingList(); // Refresh to recovery
+                                                    toast.error('Partial failure clearing history');
                                                 }
-                                                toast.success('History cleared');
-                                            } catch (err) {
-                                                fetchBuyingList(); // Refresh to recovery
-                                                toast.error('Partial failure clearing history');
                                             }
-                                        }
+                                        );
                                     }}
                                     className="text-[10px] text-red-500 hover:text-red-600 font-bold uppercase tracking-tighter transition-colors"
                                 >
@@ -665,11 +746,18 @@ export default function TodayPage() {
                                     <div className="space-y-2">
                                         {items.map((item: any) => (
                                             <div key={item.id} className="flex items-center gap-3 opacity-60 hover:opacity-100 transition-opacity pl-2 border-l-2 border-green-500/20">
-                                                <span className="text-gray-500 dark:text-gray-400 line-through decoration-green-500/30 text-sm">{item.item}</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-gray-500 dark:text-gray-400 line-through decoration-green-500/30 text-sm">{item.item}</p>
+                                                    {item.note && <p className="text-[9px] text-gray-400 dark:text-gray-500 italic line-through decoration-green-500/10">{item.note}</p>}
+                                                </div>
                                                 <div className="ml-auto flex items-center gap-3">
                                                     <button onClick={() => toggleBuyItem(item)} className="text-xs text-blue-400 hover:underline">Undo</button>
                                                     <button onClick={() => {
-                                                        if (confirm('Delete from history?')) deleteBuyItem(item.id);
+                                                        setEditingBuyItem(item);
+                                                        setAddingType('edit_buy');
+                                                    }} className="text-gray-300 hover:text-black dark:hover:text-white text-xs">✎</button>
+                                                    <button onClick={() => {
+                                                        openConfirm('Delete from history', 'Are you sure?', () => deleteBuyItem(item.id));
                                                     }} className="text-gray-300 hover:text-red-500 text-xs ml-3">🗑️</button>
                                                 </div>
                                             </div>
@@ -684,7 +772,72 @@ export default function TodayPage() {
 
             {/* MODALS */}
             <AnimatePresence>
+                {/* BUY CATEGORY FORM MODAL */}
+                {
+                    addingType === 'buy_category' && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => setAddingType(null)}>
+                            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white dark:bg-gray-900 rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border dark:border-gray-800" onClick={e => e.stopPropagation()}>
+                                <form onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    if (newCategoryName.trim()) {
+                                        await fetch('/api/buying/categories', { method: 'POST', body: JSON.stringify({ name: newCategoryName }) });
+                                        fetchBuyCategories();
+                                        setNewBuyCategory(newCategoryName);
+                                        setAddingType(null);
+                                        setNewCategoryName('');
+                                        toast.success('Category added');
+                                    }
+                                }}>
+                                    <h3 className="text-2xl font-bold mb-6 dark:text-white">New Category</h3>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase">Category Name</label>
+                                            <input autoFocus value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 font-bold text-lg dark:text-white" placeholder="e.g. Work 💼" />
+                                        </div>
+                                    </div>
+                                    <button type="submit" className="w-full bg-black text-white dark:bg-white dark:text-black font-bold py-4 rounded-xl text-lg mt-6">Create Category</button>
+                                </form>
+                            </motion.div>
+                        </div>
+                    )
+                }
+
                 {/* HABIT FORM MODAL */}
+                {/* EDIT BUY ITEM MODAL */}
+                {
+                    addingType === 'edit_buy' && editingBuyItem && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => { setAddingType(null); setEditingBuyItem(null); }}>
+                            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white dark:bg-gray-900 rounded-[2rem] p-8 w-full max-w-md shadow-2xl border dark:border-gray-800" onClick={e => e.stopPropagation()}>
+                                <form onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    const res = await fetch('/api/buying', {
+                                        method: 'PATCH',
+                                        body: JSON.stringify({ id: editingBuyItem.id, item: editingBuyItem.item, note: editingBuyItem.note })
+                                    });
+                                    if (res.ok) {
+                                        toast.success('Updated');
+                                        fetchBuyingList();
+                                        setAddingType(null);
+                                        setEditingBuyItem(null);
+                                    }
+                                }}>
+                                    <h3 className="text-2xl font-bold mb-6 dark:text-white">Edit Item</h3>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase">Item Name</label>
+                                            <input autoFocus value={editingBuyItem.item} onChange={e => setEditingBuyItem({ ...editingBuyItem, item: e.target.value })} className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 font-bold text-lg dark:text-white" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase">Note</label>
+                                            <textarea value={editingBuyItem.note || ''} onChange={e => setEditingBuyItem({ ...editingBuyItem, note: e.target.value })} className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 font-medium text-sm dark:text-white min-h-[100px] resize-none" placeholder="Add extra details..." />
+                                        </div>
+                                    </div>
+                                    <button type="submit" className="w-full bg-black text-white dark:bg-white dark:text-black font-bold py-4 rounded-xl text-lg mt-6">Save Changes</button>
+                                </form>
+                            </motion.div>
+                        </div>
+                    )
+                }
                 {
                     addingType === 'habit' && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => setAddingType(null)}>
@@ -720,10 +873,20 @@ export default function TodayPage() {
                                     <input autoFocus value={newItemTitle} onChange={e => setNewItemTitle(e.target.value)} className="w-full p-4 rounded-2xl bg-gray-50 dark:bg-gray-800 dark:text-white text-lg font-bold mb-4 outline-none focus:ring-2 ring-black/5" placeholder="Do the laundry..." />
                                     <div className="mb-4">
                                         <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Category</label>
-                                        <div className="grid grid-cols-2 gap-2">
+                                        <div className="grid grid-cols-2 gap-2 max-h-[150px] overflow-y-auto pr-1">
                                             {processedCategories.map((cat: string) => (
                                                 <button key={cat} type="button" onClick={() => setNewItemCategory(cat)} className={cn("py-2 rounded-xl font-bold border text-sm", newItemCategory === cat ? "bg-black text-white border-black dark:bg-white dark:text-black" : "border-gray-100 dark:border-gray-700 text-gray-400 dark:text-gray-500")}>{cat}</button>
                                             ))}
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setNewTaskCategoryTitle('');
+                                                    setAddingType('task_category');
+                                                }}
+                                                className="py-2 rounded-xl font-bold border border-dashed border-gray-300 text-gray-400 text-sm hover:border-gray-500"
+                                            >
+                                                + New
+                                            </button>
                                         </div>
                                     </div>
                                     <button type="submit" className="w-full bg-black text-white dark:bg-white dark:text-black font-bold py-4 rounded-xl text-lg mt-4">Add Pending Task</button>
@@ -742,6 +905,39 @@ export default function TodayPage() {
                                 <h3 className="text-2xl font-bold text-gray-900 mb-1">{user?.name}</h3>
                                 <p className="text-gray-400 font-medium text-sm mb-8">{user?.email}</p>
                                 <button onClick={handleLogout} className="w-full bg-red-50 text-red-600 font-bold py-4 rounded-xl text-lg hover:bg-red-100 transition-colors">Logout</button>
+                            </motion.div>
+                        </div>
+                    )
+                }
+
+                {/* TASK CATEGORY FORM MODAL */}
+                {
+                    addingType === 'task_category' && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => setAddingType('task')}>
+                            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white dark:bg-gray-900 rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border dark:border-gray-800" onClick={e => e.stopPropagation()}>
+                                <form onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    if (newTaskCategoryTitle.trim()) {
+                                        const r = await fetch('/api/sections', { method: 'POST', body: JSON.stringify({ title: newTaskCategoryTitle }) });
+                                        const res = await r.json();
+                                        if (res.title) {
+                                            setSections([...sections, res]);
+                                            setNewItemCategory(res.title);
+                                            setAddingType('task');
+                                            setNewTaskCategoryTitle('');
+                                            toast.success('Category added');
+                                        }
+                                    }
+                                }}>
+                                    <h3 className="text-2xl font-bold mb-6 dark:text-white">New Task Category</h3>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-400 uppercase">Category Title</label>
+                                            <input autoFocus value={newTaskCategoryTitle} onChange={e => setNewTaskCategoryTitle(e.target.value)} className="w-full p-4 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 font-bold text-lg dark:text-white" placeholder="e.g. Finance 💰" />
+                                        </div>
+                                    </div>
+                                    <button type="submit" className="w-full bg-black text-white dark:bg-white dark:text-black font-bold py-4 rounded-xl text-lg mt-6">Create Category</button>
+                                </form>
                             </motion.div>
                         </div>
                     )
@@ -832,6 +1028,36 @@ export default function TodayPage() {
                         </div>
                     )
                 }
+                {/* GLOBAL CONFIRMATION MODAL */}
+                {
+                    confirmConfig.isOpen && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm" onClick={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}>
+                            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white dark:bg-gray-900 rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border dark:border-gray-800" onClick={e => e.stopPropagation()}>
+                                <h3 className="text-2xl font-bold mb-2 dark:text-white">{confirmConfig.title}</h3>
+                                <p className="text-gray-500 dark:text-gray-400 mb-8 font-medium">{confirmConfig.message}</p>
+                                <div className="flex flex-col gap-3">
+                                    <button
+                                        onClick={() => {
+                                            confirmConfig.onConfirm();
+                                            setConfirmConfig({ ...confirmConfig, isOpen: false });
+                                        }}
+                                        className="w-full bg-black text-white dark:bg-white dark:text-black font-bold py-4 rounded-xl text-lg hover:opacity-90 transition-opacity"
+                                    >
+                                        {confirmConfig.isAlert ? 'Got it' : 'Confirm'}
+                                    </button>
+                                    {!confirmConfig.isAlert && (
+                                        <button
+                                            onClick={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+                                            className="w-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 font-bold py-4 rounded-xl text-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                    )}
+                                </div>
+                            </motion.div>
+                        </div>
+                    )
+                }
             </AnimatePresence >
         </div >
     );
@@ -871,7 +1097,12 @@ const DashboardCard = React.memo(function DashboardCard({ habit, onToggle, onUpd
                 </div>
                 <div className="mb-4">
                     <h3 className="text-xl font-black text-gray-900 dark:text-white mb-0.5">{habit.title}</h3>
-                    <p className="text-xs font-bold text-gray-400 dark:text-gray-500">{habit.subtitle}</p>
+                    <div className="flex items-center gap-2">
+                        <p className="text-xs font-bold text-gray-400 dark:text-gray-500">{habit.subtitle}</p>
+                        {!!habit.track_streak && !checked && habit.streak_expires_at && (
+                            <StreakTimer expiresAt={habit.streak_expires_at} isAtRisk={habit.streak_at_risk} />
+                        )}
+                    </div>
                 </div>
                 <div className="flex items-center gap-2 mb-4">
                     <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800 rounded-lg px-2 py-1 border border-gray-100 dark:border-gray-700 w-20">
@@ -935,3 +1166,42 @@ const TaskCard = React.memo(function TaskCard({ task, onToggle, onClick, onDelet
         </div>
     );
 });
+
+const StreakTimer = ({ expiresAt, isAtRisk }: { expiresAt: string, isAtRisk: boolean }) => {
+    const [timeLeft, setTimeLeft] = useState('');
+
+    useEffect(() => {
+        const calculate = () => {
+            const now = new Date();
+            const end = new Date(expiresAt);
+            const diff = end.getTime() - now.getTime();
+
+            if (diff <= 0) {
+                setTimeLeft('Expired');
+                return;
+            }
+
+            const h = Math.floor(diff / (1000 * 3600));
+            const m = Math.floor((diff % (1000 * 3600)) / (1000 * 60));
+            const s = Math.floor((diff % (1000 * 60)) / 1000);
+
+            setTimeLeft(`${h}h ${m}m ${s}s`);
+        };
+
+        calculate();
+        const timer = setInterval(calculate, 1000);
+        return () => clearInterval(timer);
+    }, [expiresAt]);
+
+    if (timeLeft === 'Expired') return null;
+
+    return (
+        <span className={cn(
+            "text-[10px] font-black px-2 py-0.5 rounded flex items-center gap-1 transition-all",
+            isAtRisk ? "bg-red-100 text-red-600 animate-pulse ring-2 ring-red-500/20" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+        )}>
+            {isAtRisk && <span>⌛</span>}
+            {timeLeft}
+        </span>
+    );
+};

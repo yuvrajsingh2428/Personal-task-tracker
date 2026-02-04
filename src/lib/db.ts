@@ -21,16 +21,19 @@ async function initDb() {
     const schemaStatements = [
       `CREATE TABLE IF NOT EXISTS sections (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     title TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`,
       `CREATE TABLE IF NOT EXISTS memory_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     content TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`,
       `CREATE TABLE IF NOT EXISTS habits (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     title TEXT NOT NULL,
                     subtitle TEXT,
                     icon TEXT,
@@ -41,18 +44,23 @@ async function initDb() {
                 )`,
       `CREATE TABLE IF NOT EXISTS habit_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     habit_id INTEGER,
                     date TEXT,
                     completed INTEGER DEFAULT 0,
                     time_spent INTEGER DEFAULT 0,
                     note TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(habit_id) REFERENCES habits(id)
                 )`,
       `CREATE TABLE IF NOT EXISTS daily_logs (
-                    date TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    date TEXT NOT NULL,
                     tle_minutes INTEGER DEFAULT 0,
                     note TEXT,
-                    tomorrow_intent TEXT
+                    tomorrow_intent TEXT,
+                    UNIQUE(user_id, date)
                 )`,
       `CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +71,7 @@ async function initDb() {
                 )`,
       `CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     date TEXT NOT NULL,
                     title TEXT NOT NULL,
                     completed INTEGER DEFAULT 0,
@@ -74,22 +83,29 @@ async function initDb() {
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`,
       `CREATE TABLE IF NOT EXISTS workout_schedule (
-                    day_index INTEGER PRIMARY KEY, -- 0=Sun, 1=Mon...
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    day_index INTEGER,
                     day_name TEXT NOT NULL,
                     focus_area TEXT NOT NULL,
-                    exercises TEXT
+                    exercises TEXT,
+                    UNIQUE(user_id, day_index)
                 )`,
       `CREATE TABLE IF NOT EXISTS buying_list (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
                     item TEXT NOT NULL,
                     category TEXT,
                     completed INTEGER DEFAULT 0,
+                    note TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )`,
       `CREATE TABLE IF NOT EXISTS buying_categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            user_id INTEGER,
+            name TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, name)
         )`
     ];
 
@@ -117,71 +133,38 @@ async function initDb() {
       'ALTER TABLE daily_logs ADD COLUMN dev_time INTEGER DEFAULT 0',
       'ALTER TABLE daily_logs ADD COLUMN dev_note TEXT',
       'ALTER TABLE daily_logs ADD COLUMN gym_time INTEGER DEFAULT 0',
-      'ALTER TABLE daily_logs ADD COLUMN gym_note TEXT'
+      'ALTER TABLE daily_logs ADD COLUMN gym_note TEXT',
+      // Multi-user migrations
+      'ALTER TABLE sections ADD COLUMN user_id INTEGER',
+      'ALTER TABLE memory_rules ADD COLUMN user_id INTEGER',
+      'ALTER TABLE habits ADD COLUMN user_id INTEGER',
+      'ALTER TABLE habit_logs ADD COLUMN user_id INTEGER',
+      'ALTER TABLE daily_logs ADD COLUMN user_id INTEGER',
+      'ALTER TABLE tasks ADD COLUMN user_id INTEGER',
+      'ALTER TABLE workout_schedule ADD COLUMN user_id INTEGER',
+      'ALTER TABLE buying_list ADD COLUMN user_id INTEGER',
+      'ALTER TABLE buying_categories ADD COLUMN user_id INTEGER',
+      'ALTER TABLE habit_logs ADD COLUMN created_at TEXT',
+      'UPDATE habit_logs SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL',
+      'ALTER TABLE buying_list ADD COLUMN note TEXT'
     ];
 
-    // Running migrations in a single attempt to reduce RTT
     for (const sql of migrations) {
       try { await client.execute(sql); } catch (e) { /* Expected if col exists */ }
     }
 
-    // Seed defaults if empty (Check only once)
-    const habitsCount = await client.execute('SELECT COUNT(*) as count FROM habits');
-    if (habitsCount.rows[0].count === 0) {
-      await client.execute(`INSERT INTO habits (title, subtitle, icon, color) VALUES
-              ('DSA', 'Solve 1 Problem', '🧩', 'purple'),
-              ('Learning', 'Dev / Playwright', '💻', 'amber'),
-              ('Gym', 'Health & Fitness', '💪', 'red')`);
-    }
-
-    const secCount = await client.execute('SELECT count(*) as c FROM sections');
-    const countVal = secCount.rows[0];
-
-    if (Number(countVal?.c || 0) === 0 && Number(countVal?.[0] || 0) === 0) {
-      const rs = await client.execute('SELECT * FROM sections LIMIT 1');
-      if (rs.rows.length === 0) {
-        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Work'] });
-        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Personal'] });
-        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['Revolt'] });
-        await client.execute({ sql: 'INSERT INTO sections (title) VALUES (?)', args: ['TLE'] });
-      }
-    }
-
-    const memInfo = await client.execute('SELECT * FROM memory_rules LIMIT 1');
-    if (memInfo.rows.length === 0) {
-      await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['DSA: Minimum 1 problem daily'] });
-      await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['Health is non-negotiable'] });
-      await client.execute({ sql: 'INSERT INTO memory_rules (content) VALUES (?)', args: ['Consistency > Intensity'] });
-    }
-
-    const catCheck = await client.execute('SELECT COUNT(*) as c FROM buying_categories');
-    if (Number(catCheck.rows[0].c) === 0) {
-      const defaults = ['General', 'Coco 🐶', 'Bike 🏍️', 'Household 🏠', 'Health ❤️'];
-      for (const d of defaults) {
-        await client.execute({ sql: 'INSERT OR IGNORE INTO buying_categories (name) VALUES (?)', args: [d] });
-      }
-    }
-
-    // Seed Workout Schedule if empty
-    const wsCount = await client.execute('SELECT count(*) as c FROM workout_schedule');
-    if (Number(wsCount.rows[0]?.c || wsCount.rows[0]?.[0] || 0) === 0) {
-      const wsRes = await client.execute('SELECT * FROM workout_schedule LIMIT 1');
-      if (wsRes.rows.length === 0) {
-        const manualSplit = [
-          { i: 0, n: 'Sunday', f: 'Rest / Active Recovery', e: 'Light stretching, Walk' },
-          { i: 1, n: 'Monday', f: 'Chest Day', e: 'Bench Press, Flies, Push ups' },
-          { i: 2, n: 'Tuesday', f: 'Triceps', e: 'Pushdowns, Extensions, Dips' },
-          { i: 3, n: 'Wednesday', f: 'Back', e: 'Pullups, Rows, Lat Pulldowns' },
-          { i: 4, n: 'Thursday', f: 'Biceps', e: 'Curls, Hammer Curls' },
-          { i: 5, n: 'Friday', f: 'Shoulders', e: 'Overhead Press, Lateral Raises' },
-          { i: 6, n: 'Saturday', f: 'Leg Day', e: 'Squats, Lunges, Calf Raises' }
-        ];
-        for (const d of manualSplit) {
+    // Migration: Assign existing null user_id to the first user if they exist
+    const firstUser = await client.execute('SELECT id FROM users ORDER BY id ASC LIMIT 1');
+    if (firstUser.rows.length > 0) {
+      const uid = firstUser.rows[0].id;
+      const tablesToUpdate = ['sections', 'memory_rules', 'habits', 'habit_logs', 'daily_logs', 'tasks', 'workout_schedule', 'buying_list', 'buying_categories'];
+      for (const table of tablesToUpdate) {
+        try {
           await client.execute({
-            sql: 'INSERT INTO workout_schedule (day_index, day_name, focus_area, exercises) VALUES (?, ?, ?, ?)',
-            args: [d.i, d.n, d.f, d.e]
+            sql: `UPDATE ${table} SET user_id = ? WHERE user_id IS NULL`,
+            args: [uid]
           });
-        }
+        } catch (err) { /* ignore */ }
       }
     }
 

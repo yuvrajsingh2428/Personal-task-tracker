@@ -1,24 +1,30 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { getUserId } from '@/lib/auth-util';
 
 export async function GET() {
+    const userId = await getUserId();
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     try {
         const db = await getDb();
 
-        // Get all logs for summary
-        const dailyLogsRes = await db.execute('SELECT * FROM daily_logs');
+        // Get all logs for summary (Filtered by user_id)
+        const dailyLogsRes = await db.execute({ sql: 'SELECT * FROM daily_logs WHERE user_id = ?', args: [userId] });
         const dailyLogs = dailyLogsRes.rows;
 
-        // Get all tasks with section title
-        const tasksRes = await db.execute(`
+        // Get all tasks with section title (Filtered by user_id)
+        const tasksRes = await db.execute({
+            sql: `
             SELECT t.*, s.title as section_title 
             FROM tasks t 
             LEFT JOIN sections s ON t.section_id = s.id 
+            WHERE t.user_id = ?
             ORDER BY t.priority DESC
-        `);
+        `, args: [userId]
+        });
         const tasks = tasksRes.rows;
 
-        // Form unique dates list
         const dates = new Set([
             ...dailyLogs.map((l: any) => l.date),
             ...tasks.map((t: any) => t.date)
@@ -31,7 +37,7 @@ export async function GET() {
             return {
                 date,
                 tasks: dayTasks,
-                ...summary // Spread all daily_log fields (dsa_time, dsa_note, etc.)
+                ...summary
             };
         });
 

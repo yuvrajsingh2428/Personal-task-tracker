@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { getUserId } from '@/lib/auth-util';
 
 export async function GET(request: Request) {
+    const userId = await getUserId();
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
 
@@ -11,65 +15,44 @@ export async function GET(request: Request) {
         const db = await getDb();
 
         // 1. Get Daily Summary
-        const summaryRes = await db.execute({ sql: 'SELECT * FROM daily_logs WHERE date = ?', args: [date] });
+        const summaryRes = await db.execute({ sql: 'SELECT * FROM daily_logs WHERE date = ? AND user_id = ?', args: [date, userId] });
         let summary: any = summaryRes.rows[0];
         if (!summary) summary = { date, tle_minutes: 0, note: '', tomorrow_intent: '', dsa_done: 0, dev_done: 0, gym_done: 0 };
 
         // 2. STREAK CALCULATION
-        const historyRes = await db.execute('SELECT date, dsa_done, dev_done, gym_done FROM daily_logs ORDER BY date DESC LIMIT 100');
+        const historyRes = await db.execute({ sql: 'SELECT date, dsa_done, dev_done, gym_done FROM daily_logs WHERE user_id = ? ORDER BY date DESC LIMIT 100', args: [userId] });
         const history = historyRes.rows as any[];
 
         const calcStreak = (field: string) => {
-            let streak = 0;
-            // Check today (if done, count it. if not, check yesterday)
-            // Actually, simple streak: Count consecutive days starting from latest done.
-            // But we want "Current Streak".
-            // If I missed yesterday, streak is 0 (unless I did today).
-
-            // Simple algo:
-            // Find most recent day with status=1.
-            // If that day is Today or Yesterday, start counting back.
-            // If most recent is 2 days ago, streak is 0.
-
             const todayStr = new Date().toISOString().split('T')[0];
             const yesterdayDate = new Date(); yesterdayDate.setDate(yesterdayDate.getDate() - 1);
             const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
 
             let streakStart = -1;
-
-            // Look for start
             for (let i = 0; i < history.length; i++) {
                 if (history[i][field]) {
-                    // found a done day.
-                    // is it recent enough?
                     if (history[i].date === todayStr || history[i].date === yesterdayStr) {
                         streakStart = i;
                         break;
                     } else {
-                        return 0; // Broken streak
+                        return 0;
                     }
                 }
             }
 
             if (streakStart === -1) return 0;
 
-            // Count backwards
-            streak = 1;
+            let streak = 1;
             let lastDate = new Date(history[streakStart].date);
-
             for (let i = streakStart + 1; i < history.length; i++) {
                 if (history[i][field]) {
                     const currDate = new Date(history[i].date);
                     const diff = (lastDate.getTime() - currDate.getTime()) / (1000 * 3600 * 24);
-                    if (diff >= 0.9 && diff <= 1.1) { // roughly 1 day
+                    if (diff >= 0.9 && diff <= 1.1) {
                         streak++;
                         lastDate = currDate;
-                    } else {
-                        break; // gap
-                    }
-                } else {
-                    break; // not done
-                }
+                    } else break;
+                } else break;
             }
             return streak;
         };
@@ -81,19 +64,19 @@ export async function GET(request: Request) {
         };
 
         // 3. GYM SCHEDULE
-        const gymRes = await db.execute('SELECT * FROM workout_schedule ORDER BY day_index');
+        const gymRes = await db.execute({ sql: 'SELECT * FROM workout_schedule WHERE user_id = ? ORDER BY day_index', args: [userId] });
 
-        // 4. HABITS & TASKS (Standard)
-        const habitsRes = await db.execute('SELECT * FROM habits WHERE is_archived = 0');
+        // 4. HABITS & TASKS
+        const habitsRes = await db.execute({ sql: 'SELECT * FROM habits WHERE user_id = ?', args: [userId] });
         const habits = habitsRes.rows;
 
-        const existingTasksRes = await db.execute({ sql: 'SELECT habit_id FROM tasks WHERE date = ? AND habit_id IS NOT NULL', args: [date] });
+        const existingTasksRes = await db.execute({ sql: 'SELECT habit_id FROM tasks WHERE date = ? AND habit_id IS NOT NULL AND user_id = ?', args: [date, userId] });
         const existingIds = new Set(existingTasksRes.rows.map((t: any) => t.habit_id));
         const newHabits = habits.filter((h: any) => !existingIds.has(h.id));
         if (newHabits.length > 0) {
             const batch = newHabits.map((h: any) => ({
-                sql: 'INSERT INTO tasks (date, title, priority, habit_id, completed) VALUES (?, ?, ?, ?, 0)',
-                args: [date, h.title, h.priority, h.id]
+                sql: 'INSERT INTO tasks (user_id, date, title, priority, habit_id, completed) VALUES (?, ?, ?, ?, ?, 0)',
+                args: [userId, date, h.title, h.priority, h.id]
             }));
             if (batch.length > 0) await db.batch(batch, 'write');
         }
@@ -103,15 +86,14 @@ export async function GET(request: Request) {
             SELECT t.*, s.title as section_title 
             FROM tasks t
             LEFT JOIN sections s ON t.section_id = s.id
-            WHERE (t.date = ?) OR (t.date < ? AND t.completed = 0)
+            WHERE ((t.date = ?) OR (t.date < ? AND t.completed = 0)) AND t.user_id = ?
             ORDER BY t.priority DESC, t.id ASC
             `,
-            args: [date, date]
+            args: [date, date, userId]
         });
 
-        // 5. Aux Data
-        const sectionsRes = await db.execute('SELECT * FROM sections');
-        const rulesRes = await db.execute('SELECT * FROM memory_rules');
+        const sectionsRes = await db.execute({ sql: 'SELECT * FROM sections WHERE user_id = ?', args: [userId] });
+        const rulesRes = await db.execute({ sql: 'SELECT * FROM memory_rules WHERE user_id = ?', args: [userId] });
 
         return NextResponse.json({
             ...summary,
@@ -128,6 +110,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    const userId = await getUserId();
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
     try {
         const body = await request.json();
         const { date, tle_minutes, note, tomorrow_intent } = body;
@@ -139,12 +124,12 @@ export async function POST(request: Request) {
         await db.execute({
             sql: `
             INSERT INTO daily_logs (
-                date, tle_minutes, note, tomorrow_intent, 
+                user_id, date, tle_minutes, note, tomorrow_intent, 
                 dsa_done, dev_done, gym_done, work_done, secondary_work_mins, focus_done,
                 dsa_time, dsa_note, dev_time, dev_note, gym_time, gym_note
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(date) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, date) DO UPDATE SET
                 tle_minutes = COALESCE(excluded.tle_minutes, daily_logs.tle_minutes),
                 note = COALESCE(excluded.note, daily_logs.note),
                 tomorrow_intent = COALESCE(excluded.tomorrow_intent, daily_logs.tomorrow_intent),
@@ -162,7 +147,7 @@ export async function POST(request: Request) {
                 gym_note = COALESCE(excluded.gym_note, daily_logs.gym_note)
             `,
             args: [
-                date,
+                userId, date,
                 tle_minutes ?? null, note ?? null, tomorrow_intent ?? null,
                 body.dsa_done ?? null, body.dev_done ?? null, body.gym_done ?? null,
                 body.work_done ?? null, body.secondary_work_mins ?? null, body.focus_done ?? null,

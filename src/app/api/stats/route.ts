@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { getUserId } from '@/lib/auth-util';
 
 export async function GET() {
+  const userId = await getUserId();
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   try {
     const db = await getDb();
 
@@ -11,24 +15,19 @@ export async function GET() {
     d.setDate(d.getDate() - 6);
     const startDate = d.toISOString().split('T')[0];
 
-    // Fetch completed tasks in range
-    const tasksRes = await db.execute({
-      sql: `
-            SELECT * FROM tasks 
-            WHERE date >= ? AND date <= ? AND completed = 1
-            `,
-      args: [startDate, endDate]
-    });
-    const tasks = tasksRes.rows;
+    // Fetch completed tasks in range (Filtered by user_id)
+    const [tasksRes, logsRes] = await Promise.all([
+      db.execute({
+        sql: `SELECT * FROM tasks WHERE date >= ? AND date <= ? AND completed = 1 AND user_id = ?`,
+        args: [startDate, endDate, userId]
+      }),
+      db.execute({
+        sql: `SELECT * FROM daily_logs WHERE date >= ? AND date <= ? AND user_id = ?`,
+        args: [startDate, endDate, userId]
+      })
+    ]);
 
-    // TLE Total
-    const logsRes = await db.execute({
-      sql: `
-            SELECT * FROM daily_logs 
-            WHERE date >= ? AND date <= ?
-            `,
-      args: [startDate, endDate]
-    });
+    const tasks = tasksRes.rows;
     const logs = logsRes.rows;
 
     const stats = {

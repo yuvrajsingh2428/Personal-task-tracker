@@ -29,9 +29,42 @@ export async function POST(request: Request) {
                 sql: 'INSERT INTO users (name, email, password) VALUES (?, ?, ?)',
                 args: [name, email, hashedPassword]
             });
+            const userId = Number(res.lastInsertRowid);
+
+            // Seed Personal Default Data for the new user
+            await db.batch([
+                // 1. Habits
+                {
+                    sql: 'INSERT INTO habits (user_id, title, subtitle, icon, color, track_streak) VALUES (?, ?, ?, ?, ?, 1), (?, ?, ?, ?, ?, 1), (?, ?, ?, ?, ?, 1)',
+                    args: [
+                        userId, 'DSA', 'Solve 1 Problem', '🧩', 'purple',
+                        userId, 'Learning', 'Dev / Playwright', '💻', 'amber',
+                        userId, 'Gym', 'Health & Fitness', '💪', 'red'
+                    ]
+                },
+                // 2. Sections
+                { sql: 'INSERT INTO sections (user_id, title) VALUES (?, ?), (?, ?), (?, ?), (?, ?)', args: [userId, 'Work', userId, 'Personal', userId, 'Revolt', userId, 'TLE'] },
+                // 3. Memory Rules
+                {
+                    sql: 'INSERT INTO memory_rules (user_id, content) VALUES (?, ?), (?, ?), (?, ?)',
+                    args: [userId, 'DSA: Minimum 1 problem daily', userId, 'Health is non-negotiable', userId, 'Consistency > Intensity']
+                },
+                // 4. Workout Schedule
+                {
+                    sql: `INSERT INTO workout_schedule (user_id, day_index, day_name, focus_area, exercises) VALUES 
+                        (?, 0, 'Sunday', 'Rest / Active Recovery', 'Light stretching, Walk'),
+                        (?, 1, 'Monday', 'Chest Day', 'Bench Press, Flies, Push ups'),
+                        (?, 2, 'Tuesday', 'Triceps', 'Pushdowns, Extensions, Dips'),
+                        (?, 3, 'Wednesday', 'Back', 'Pullups, Rows, Lat Pulldowns'),
+                        (?, 4, 'Thursday', 'Biceps', 'Curls, Hammer Curls'),
+                        (?, 5, 'Friday', 'Shoulders', 'Overhead Press, Lateral Raises'),
+                        (?, 6, 'Saturday', 'Leg Day', 'Squats, Lunges, Calf Raises')`,
+                    args: [userId, userId, userId, userId, userId, userId, userId]
+                }
+            ], "write");
 
             // Create JWT
-            const token = await new SignJWT({ uid: res.lastInsertRowid?.toString(), email })
+            const token = await new SignJWT({ uid: userId.toString(), email })
                 .setProtectedHeader({ alg: 'HS256' })
                 .setExpirationTime('30d')
                 .sign(JWT_SECRET);
